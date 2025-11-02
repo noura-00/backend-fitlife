@@ -1,8 +1,7 @@
 from django.contrib import admin
-from .models import WorkoutPlan
+from .models import WorkoutPlan, Post, Comment, UserProfile
 
-@admin.register(WorkoutPlan)
-class WorkoutPlanAdmin(admin.ModelAdmin):
-    list_display = ('title', 'goal', 'duration_weeks', 'created_at')
-    list_filter = ('goal',)
-    search_fields = ('title', 'notes')
+admin.site.register(WorkoutPlan)
+admin.site.register(Post)
+admin.site.register(Comment)
+admin.site.register(UserProfile)
