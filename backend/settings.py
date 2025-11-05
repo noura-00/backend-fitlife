@@ -10,13 +10,14 @@ from datetime import timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
-SECRET_KEY = os.environ.get("SECRET_KEY")
+SECRET_KEY = os.environ.get("SECRET_KEY", "django-insecure-default-key-for-development-only-change-in-production")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-DEBUG = True
-
-ALLOWED_HOSTS = []
+DEBUG = os.environ.get('DEBUG', 'True') == 'True'
+default_hosts = 'localhost,127.0.0.1,backend,api,0.0.0.0'
+ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', default_hosts).split(',')
+CORS_ALLOW_HEADERS = ['*']
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -84,28 +85,28 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'backend.wsgi.application'
-
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'fitlife',
+if os.environ.get("SQL_ENGINE") == "django.db.backends.postgresql":
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.environ.get("SQL_DATABASE", "fitlife_django_dev"),
+            "USER": os.environ.get("SQL_USER", "docker_django_user"),
+            "PASSWORD": os.environ.get("SQL_PASSWORD", "hello_django"),
+            "HOST": os.environ.get("SQL_HOST", "db"),
+            "PORT": os.environ.get("SQL_PORT", "5432"),
+        }
     }
-}
+else:
+ 
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 
-AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
-]
+# Disabled all password validators to make registration simple
+AUTH_PASSWORD_VALIDATORS = []
 
 LANGUAGE_CODE = 'en-us'
 
@@ -117,8 +118,25 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024 
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 10240
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://0.0.0.0:5174",
 ]
+if DEBUG:
+    CORS_ALLOW_ALL_ORIGINS = True
+    CORS_ALLOW_CREDENTIALS = True

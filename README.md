@@ -7,6 +7,8 @@ The backend is built using **Django REST Framework** and provides the main API f
 
 ---
 
+
+
 ## Technologies Used
 
 - **Python 3.13**
@@ -55,6 +57,10 @@ backend-fitlife/
 ```
 
 ---
+
+## ERD
+![ERD Diagram](./images/erd-diagram.png)
+
 
 ## Models
 
