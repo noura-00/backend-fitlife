@@ -22,7 +22,8 @@ class WorkoutPlan(models.Model):
 
 class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
-    height = models.FloatField(null=True, blank=True)
+    height = models.IntegerField(null=True, blank=True, help_text="Height in cm")
+    age = models.IntegerField(null=True, blank=True)
     current_weight = models.FloatField(null=True, blank=True)
     target_weight = models.FloatField(null=True, blank=True)
     goal = models.CharField(max_length=100, blank=True)  
@@ -32,6 +33,9 @@ class UserProfile(models.Model):
     followers_count = models.PositiveIntegerField(default=0)
     following_count = models.PositiveIntegerField(default=0)
     selected_workout_plan = models.ForeignKey(WorkoutPlan, on_delete=models.SET_NULL, null=True, blank=True, related_name="user_profiles")
+    show_age_public = models.BooleanField(default=False)
+    show_height_public = models.BooleanField(default=False)
+    show_fitness_info_public = models.BooleanField(default=False)
 
     def __str__(self):
         return self.user.username
@@ -62,3 +66,39 @@ class Comment(models.Model):
 
     def __str__(self):
         return f"Comment by {self.user.username} on post {self.post.id}"
+
+
+class Follow(models.Model):
+    """Model to track user follows (like Instagram)"""
+    follower = models.ForeignKey(User, on_delete=models.CASCADE, related_name="following")
+    following = models.ForeignKey(User, on_delete=models.CASCADE, related_name="followers")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('follower', 'following')
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.follower.username} follows {self.following.username}"
+    
+    def save(self, *args, **kwargs):
+        """Update follower/following counts when follow is created"""
+        super().save(*args, **kwargs)
+        self._update_counts()
+    
+    def delete(self, *args, **kwargs):
+        """Update follower/following counts when follow is deleted"""
+        super().delete(*args, **kwargs)
+        self._update_counts()
+    
+    def _update_counts(self):
+        """Update follower and following counts for both users"""
+        # Update following count for follower
+        follower_profile, _ = UserProfile.objects.get_or_create(user=self.follower)
+        follower_profile.following_count = Follow.objects.filter(follower=self.follower).count()
+        follower_profile.save()
+        
+        # Update followers count for following
+        following_profile, _ = UserProfile.objects.get_or_create(user=self.following)
+        following_profile.followers_count = Follow.objects.filter(following=self.following).count()
+        following_profile.save()

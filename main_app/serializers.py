@@ -36,12 +36,38 @@ class UserProfileSerializer(serializers.ModelSerializer):
     user_id = serializers.IntegerField(source='user.id', read_only=True)
     selected_workout_plan_detail = WorkoutPlanSerializer(source='selected_workout_plan', read_only=True)
     
+    def to_representation(self, instance):
+        """Override to filter age/height based on privacy settings"""
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        
+        # Check if viewing own profile
+        is_own_profile = request and request.user and request.user.id == instance.user.id
+        
+        # Filter age based on privacy
+        if not is_own_profile and not instance.show_age_public:
+            data['age'] = None
+        
+        # Filter height based on privacy
+        if not is_own_profile and not instance.show_height_public:
+            data['height'] = None
+        
+        return data
+    
     class Meta:
         model = UserProfile
-        fields = ('id', 'user_id', 'username', 'email', 'height', 'current_weight', 'target_weight', 
+        fields = ('id', 'user_id', 'username', 'email', 'height', 'age', 'current_weight', 'target_weight', 
                   'goal', 'activity_level', 'profile_picture', 'bio', 'followers_count', 
-                  'following_count', 'selected_workout_plan', 'selected_workout_plan_detail')
+                  'following_count', 'selected_workout_plan', 'selected_workout_plan_detail',
+                  'show_age_public', 'show_height_public', 'show_fitness_info_public')
         read_only_fields = ('followers_count', 'following_count', 'username', 'email', 'user_id', 'selected_workout_plan_detail')
+        extra_kwargs = {
+            'age': {'required': False, 'allow_null': True},
+            'height': {'required': False, 'allow_null': True},
+            'show_age_public': {'required': False},
+            'show_height_public': {'required': False},
+            'show_fitness_info_public': {'required': False},
+        }
 
 
 class CommentSerializer(serializers.ModelSerializer):
@@ -62,13 +88,11 @@ class PostSerializer(serializers.ModelSerializer):
     image = serializers.ImageField(required=False, allow_null=True, max_length=None)
     
     def get_user_profile_picture(self, obj):
-       
         try:
             profile = obj.user.profile
             if profile and profile.profile_picture:
-                
                 return profile.profile_picture.url
-        except:
+        except Exception:
             pass
         return None
     

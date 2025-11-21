@@ -1,16 +1,137 @@
+import json
+import os
+import random
+import re
+from datetime import timedelta
+
+import requests
+from django.utils import timezone
 from django.contrib.auth import authenticate
+from django.contrib.auth.models import User
 from django.db import models
-from rest_framework.views import APIView
-from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
+
+from .models import Comment, Follow, Post, UserProfile, WorkoutPlan
 from .serializers import (
-    UserSerializer, UserProfileSerializer, WorkoutPlanSerializer,
-    PostSerializer, CommentSerializer
+    CommentSerializer,
+    PostSerializer,
+    UserProfileSerializer,
+    UserSerializer,
+    WorkoutPlanSerializer,
 )
-from .models import UserProfile, WorkoutPlan, Post, Comment
-from rest_framework.permissions import AllowAny
+from .ai.ai_generator import generate_ai_response
+
+
+class OpenAIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        data = request.data or {}
+        user_message = data.get('message', '').strip()
+        if not user_message:
+            return Response({'error': 'Message is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            return generate_ai_response(request.user, user_message, data)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# ============================================================
+# FITLIFE AI COACH - MASTER SYSTEM PROMPT
+# ============================================================
+# This is the permanent brain of FitLife AI Chat
+# Replace {{user_name}} dynamically with the logged-in user's name
+# ============================================================
+
+
+
+class HomeView(APIView):
+    permission_classes = [AllowAny]
+    
+    def get(self, request):
+        content = {"message": "Welcome to the FitLife api home route!"}
+        return Response(content)
+
+
+class CreateUserView(APIView):
+    permission_classes = [AllowAny]
+    def post(self, request):
+        try:
+            serializer = UserSerializer(data=request.data)
+            if not serializer.is_valid():
+                errors = serializer.errors
+                error_message = "Data validation error"
+                if 'username' in errors:
+                    if 'unique' in str(errors['username']):
+                        error_message = "Username already taken"
+                    else:
+                        error_message = f"Username error: {errors['username'][0]}"
+                elif 'password' in errors:
+                    error_message = f"Password error: {errors['password'][0]}"
+                else:
+                    error_message = str(errors)
+                return Response({'error': error_message}, status=status.HTTP_400_BAD_REQUEST)
+            
+            user = serializer.save()
+            
+            # Create user profile if it doesn't exist
+            try:
+                UserProfile.objects.get_or_create(user=user)
+            except Exception as profile_err:
+                print(f"Profile creation error: {profile_err}")
+                # Continue anyway - profile is optional for signup
+            
+            refresh = RefreshToken.for_user(user)
+
+            data = {
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'user': UserSerializer(user).data
+            }
+            return Response(data, status=status.HTTP_201_CREATED)
+        except Exception as err:
+            import traceback
+            error_trace = traceback.format_exc()
+            print(f"Signup error: {str(err)}")
+            print(f"Traceback: {error_trace}")
+            error_message = str(err)
+            if 'already exists' in error_message.lower() or 'unique' in error_message.lower():
+                error_message = "Username already taken"
+            return Response({'error': error_message}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class LoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        try:
+            username = request.data.get('username')
+            password = request.data.get('password')
+            
+            if not username or not password:
+                return Response({'error': 'Username and password are required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            user = authenticate(username=username, password=password)
+            
+            if user is None:
+                return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+            
+            refresh = RefreshToken.for_user(user)
+            
+            data = {
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'user': UserSerializer(user).data
+            }
+            return Response(data, status=status.HTTP_200_OK)
+        except Exception as err:
+            return Response({'error': str(err)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class HomeView(APIView):
@@ -105,9 +226,30 @@ class UserProfileDetailView(APIView):
     def get(self, request):
         try:
             profile, created = UserProfile.objects.get_or_create(user=request.user)
-            serializer = UserProfileSerializer(profile)
-            return Response(serializer.data, status=status.HTTP_200_OK)
+            # Ensure default values for new fields if profile was just created
+            if created:
+                profile.show_age_public = False
+                profile.show_height_public = False
+                profile.show_fitness_info_public = False
+                profile.save()
+            serializer = UserProfileSerializer(profile, context={'request': request})
+            data = serializer.data
+            # Ensure all new fields are present with defaults if null
+            if data.get('age') is None:
+                data['age'] = None
+            if data.get('height') is None:
+                data['height'] = None
+            if 'show_age_public' not in data:
+                data['show_age_public'] = False
+            if 'show_height_public' not in data:
+                data['show_height_public'] = False
+            if 'show_fitness_info_public' not in data:
+                data['show_fitness_info_public'] = False
+            return Response(data, status=status.HTTP_200_OK)
         except Exception as err:
+            import traceback
+            print(f"Profile GET error: {str(err)}")
+            print(traceback.format_exc())
             return Response({'error': str(err)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def put(self, request):
@@ -125,7 +267,7 @@ class UserProfileDetailView(APIView):
                 if 'bio' in request.data:
                     profile.bio = request.data['bio']
                 profile.save()
-                serializer = UserProfileSerializer(profile)
+                serializer = UserProfileSerializer(profile, context={'request': request})
                 return Response(serializer.data, status=status.HTTP_200_OK)
             
             
@@ -146,10 +288,66 @@ class UserProfileDetailView(APIView):
             data = request.data.copy()
             if request.FILES:
                 data.update(request.FILES)
-            serializer = UserProfileSerializer(profile, data=data, partial=True)
+            
+            # Handle age and height conversion from string to int/None
+            if 'age' in data:
+                age_val = data.get('age')
+                if age_val == '' or age_val is None:
+                    data['age'] = None
+                else:
+                    try:
+                        data['age'] = int(age_val) if age_val else None
+                    except (ValueError, TypeError):
+                        data['age'] = None
+            
+            if 'height' in data:
+                height_val = data.get('height')
+                if height_val == '' or height_val is None:
+                    data['height'] = None
+                else:
+                    try:
+                        data['height'] = int(height_val) if height_val else None
+                    except (ValueError, TypeError):
+                        data['height'] = None
+            
+            # Handle boolean fields
+            if 'show_age_public' in data:
+                val = data.get('show_age_public')
+                if isinstance(val, str):
+                    data['show_age_public'] = val.lower() in ('true', '1', 'yes', 'on')
+                elif val is None:
+                    data['show_age_public'] = False
+            
+            if 'show_height_public' in data:
+                val = data.get('show_height_public')
+                if isinstance(val, str):
+                    data['show_height_public'] = val.lower() in ('true', '1', 'yes', 'on')
+                elif val is None:
+                    data['show_height_public'] = False
+            
+            if 'show_fitness_info_public' in data:
+                val = data.get('show_fitness_info_public')
+                if isinstance(val, str):
+                    data['show_fitness_info_public'] = val.lower() in ('true', '1', 'yes', 'on')
+                elif val is None:
+                    data['show_fitness_info_public'] = False
+            
+            serializer = UserProfileSerializer(profile, data=data, partial=True, context={'request': request})
             if serializer.is_valid():
                 serializer.save()
-                return Response(serializer.data, status=status.HTTP_200_OK)
+                response_data = serializer.data
+                # Ensure all fields are present in response
+                if response_data.get('age') is None:
+                    response_data['age'] = None
+                if response_data.get('height') is None:
+                    response_data['height'] = None
+                if 'show_age_public' not in response_data:
+                    response_data['show_age_public'] = getattr(profile, 'show_age_public', False)
+                if 'show_height_public' not in response_data:
+                    response_data['show_height_public'] = getattr(profile, 'show_height_public', False)
+                if 'show_fitness_info_public' not in response_data:
+                    response_data['show_fitness_info_public'] = getattr(profile, 'show_fitness_info_public', False)
+                return Response(response_data, status=status.HTTP_200_OK)
             error_message = "Data validation error"
             if serializer.errors:
                 first_error = list(serializer.errors.values())[0]
@@ -157,7 +355,7 @@ class UserProfileDetailView(APIView):
                     error_message = str(first_error[0])
                 else:
                     error_message = str(first_error)
-            return Response({'error': error_message}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': error_message, 'details': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as err:
             return Response({'error': str(err)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -448,4 +646,84 @@ class CommentDetailView(APIView):
             return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as err:
             return Response({'error': str(err)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class FollowUserView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, user_id):
+        """Follow a user"""
+        try:
+            if request.user.id == user_id:
+                return Response({'error': 'Cannot follow yourself'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            user_to_follow = User.objects.get(id=user_id)
+            follow, created = Follow.objects.get_or_create(
+                follower=request.user,
+                following=user_to_follow
+            )
+            
+            if created:
+                # Update counts
+                follow._update_counts()
+                return Response({
+                    'message': 'Successfully followed user',
+                    'is_following': True
+                }, status=status.HTTP_201_CREATED)
+            else:
+                return Response({
+                    'message': 'Already following this user',
+                    'is_following': True
+                }, status=status.HTTP_200_OK)
+                
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as err:
+            return Response({'error': str(err)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def delete(self, request, user_id):
+        """Unfollow a user"""
+        try:
+            user_to_unfollow = User.objects.get(id=user_id)
+            follow = Follow.objects.filter(
+                follower=request.user,
+                following=user_to_unfollow
+            ).first()
+            
+            if follow:
+                follow.delete()
+                return Response({
+                    'message': 'Successfully unfollowed user',
+                    'is_following': False
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({
+                    'message': 'Not following this user',
+                    'is_following': False
+                }, status=status.HTTP_200_OK)
+                
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as err:
+            return Response({'error': str(err)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def get(self, request, user_id):
+        """Check if current user is following this user"""
+        try:
+            user_to_check = User.objects.get(id=user_id)
+            is_following = Follow.objects.filter(
+                follower=request.user,
+                following=user_to_check
+            ).exists()
+            
+            return Response({
+                'is_following': is_following
+            }, status=status.HTTP_200_OK)
+                
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as err:
+            return Response({'error': str(err)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 

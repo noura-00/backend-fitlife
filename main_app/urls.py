@@ -2,10 +2,18 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
-    HomeView, CreateUserView, LoginView, UserProfileDetailView,
-    WorkoutPlanListView, WorkoutPlanDetailView,
-    PostListView, PostDetailView,
-    CommentListView, CommentDetailView
+    CommentListView,
+    CommentDetailView,
+    CreateUserView,
+    OpenAIView,
+    FollowUserView,
+    HomeView,
+    LoginView,
+    PostDetailView,
+    PostListView,
+    UserProfileDetailView,
+    WorkoutPlanDetailView,
+    WorkoutPlanListView,
 )
 
 # URL PATTERNS
@@ -42,4 +50,10 @@ urlpatterns = [
 
     # comment detail (get, update, delete)
     path('comments/<int:pk>/', CommentDetailView.as_view(), name='comment-detail'),
+
+    # OpenAI Chat endpoint
+    path('api/openai/', OpenAIView.as_view(), name='openai-chat'),
+
+    # Follow/Unfollow user
+    path('users/<int:user_id>/follow/', FollowUserView.as_view(), name='follow-user'),
 ]
